@@ -2981,7 +2981,14 @@ pub fn decl_crate_map(sess: session::Session, mapmeta: LinkMeta,
             llvm::LLVMAddGlobal(llmod, maptype.to_ref(), buf)
         }
     };
-    lib::llvm::SetLinkage(map, lib::llvm::ExternalLinkage);
+    // On windows we'd like to export the toplevel cratemap
+    // such that we can find it from libstd.
+    if targ_cfg.os == session::OsWin32 && "toplevel" == mapname {
+        lib::llvm::SetLinkage(map, lib::llvm::DLLExportLinkage);
+    } else {
+        lib::llvm::SetLinkage(map, lib::llvm::ExternalLinkage);
+    }
+
     return map;
 }
 
@@ -3136,6 +3143,21 @@ pub fn trans_crate(sess: session::Session,
 
     decl_gc_metadata(ccx, llmod_id);
     fill_crate_map(ccx, ccx.crate_map);
+
+    // Terrible win32 hack :(
+    if ccx.sess.targ_cfg.os == session::OsWin32 &&
+       !*ccx.sess.building_library {
+
+        let maptype = val_ty(ccx.crate_map).to_ref();
+
+        do "__rust_crate_map_toplevel".with_c_str |buf| {
+            unsafe {
+                llvm::LLVMAddAlias(ccx.llmod, maptype,
+                                   ccx.crate_map, buf);
+            }
+        }
+    }
+
     glue::emit_tydescs(ccx);
     write_abi_version(ccx);
     if ccx.sess.opts.debuginfo {
